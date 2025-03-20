@@ -1,0 +1,368 @@
+---
+title: 'Project 2'
+author: "Nigel Bastian Cendra (s2610920)"
+output:
+  html_document:
+    number_sections: yes
+  pdf_document:
+    number_sections: yes
+header-includes:
+  - \newcommand{\bm}[1]{\boldsymbol{#1}}
+  - \newcommand{\mat}[1]{\begin{bmatrix}#1\end{bmatrix}}
+---
+
+```{r setup, include = FALSE}
+# Modify this setup code chunk to set options
+# or add extra packages etc if needed.
+# See the project instructions for more details
+# on what code to show, and where/how.
+
+# Set default code chunk options
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE
+)
+
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(ggplot2))
+theme_set(theme_bw())
+
+# To give the same random number sequence every time the document is knit:ed,
+# making it easier to discuss the specific numbers in the text:
+
+set.seed(12345L)
+```
+
+```{r code=readLines("code.R"), eval=TRUE, echo=FALSE, results='hide'}
+# Do not change this code chunk
+# Load function definitions
+source("code.R")
+```
+# Part 1: 3D printer
+
+## Compute Probabilistic Predictions of Actual Weight
+
+In this case, we have a model that doesn't fit the basic regression system where we have a constant variance for all the observation, but instead we have a linear model for the expected value and log linear model for the variance. Hence, we need to figure out the parameters since we don't have a closed form expression for the estimates and we also need to figure out it's predictive distribution.
+
+Let $$Z_E = \begin{bmatrix}
+    1 & x & 0  & 0 \\
+    1 & x & 0  & 0 \\
+    \vdots & \vdots & \vdots & \vdots \\
+    1 & x & 0  & 0
+\end{bmatrix} \in \mathbb{R}^{86\times4}$$ be the matrix of observation for the expected value, where the vector of observation expectation can be written as $E_{y|\beta}(y) = Z_E\beta$ where $\beta = [\beta1,\beta2,\beta3,\beta4]$ and x is a covariance with different value for each observation.
+
+Similarly for the log-variance, we first define $$Z_V = \begin{bmatrix}
+    0 & 0 & 1  & x \\
+    0 & 0 & 1  & x \\
+    \vdots & \vdots & \vdots & \vdots \\
+    0 & 0 & 1  & x
+\end{bmatrix} \in \mathbb{R}^{86\times4}$$ as the matrix of observation of the variance for model A, where the vector of log-variances can be written as $\sigma^2 = exp(Z_V\beta)$ where $\beta = [\beta1,\beta2,\beta3,\beta4]$ and x is a covariance with different value for each observation.
+
+As for model B, we define the matrix of observation of the variance model as
+$$Z_V = \begin{bmatrix}
+    0 & 0 & 1  & x^2 \\
+    0 & 0 & 1  & x^2 \\
+    \vdots & \vdots & \vdots & \vdots \\
+    0 & 0 & 1  & x^2
+\end{bmatrix} \in \mathbb{R}^{86\times4}$$
+
+Now, we can write our model distribution as $y|\beta \sim N(Z_E^T\beta, exp(Z_V^T\beta)), \theta|y \sim N(\hat{\beta}, \hat{\sum}_{\beta})$ and we are trying to find $\mu_F$ and $\sigma^2_F$
+
+We can compute the $\mu_F$ as:
+
+$\mu_F = E_{y'|y}(y') = E_{F}(y') = Z_E^T\hat{\beta} = E_{\beta|y}(E_{y'|\beta}(y'))$ 
+where to get this $\mu_F$, we can use the function filament_aux_EV and get the E parameter as the $\mu_F$
+
+
+On the other hand, computing $\sigma^2_F$ is a bit more tricky,
+
+$\sigma^2_F = Var_F(y') = E_{\beta|y}[exp(Z_V^T\beta] + Var_{\beta|y}(Z_E^T\beta)$
+where $Var_{\beta|y}(Z_E^T\beta) = Cov_{\beta|y}(Z_E^T\beta, Z_E^T\beta) = Z_E^TCov(\beta,\beta)Z_E = Z_E^T\hat{\sum}_{\beta}Z_E$
+
+and $E_{\beta|y}[exp(Z_V^T\beta] = exp(Z_V^T\hat{\beta + Z_V^T\hat{\sum}_{\beta}Z_V/2})$ due to the fact that if $x \sim N(\mu, \sigma^2)$, then $E(e^x) = e^{\mu + \sigma^2/2}$ 
+
+then, combining this result, we get that:
+
+$\sigma^2_F = Var_F(y') = E_{\beta|y}[exp(Z_V^T\beta] + Var_{\beta|y}(Z_E^T\beta) = exp(Z_V^T\hat{\beta + Z_V^T\hat{\sum}_{\beta}Z_V/2}) + Z_E^T\hat{\sum}_{\beta}Z_E$ where we can get both the $E_{\beta|y}[exp(Z_V^T\beta]$ and $Var_{\beta|y}(Z_E^T\beta)$ from the filament_aux_EV and get the EV and VE parameter respectively.
+
+Hence, to get the 95% prediction interval, we can find the lower and upper bound by:
+
+Lower Bound = $\mu_F - z_{0.975}\sqrt{\sigma^2_F}$
+
+Upper Bound = $\mu_F + z_{0.975}\sqrt{\sigma^2_F}$
+
+```{r}
+load("filament1.rda")
+#model A
+predictions_model_A <- filament1_predict(filament1, "A", filament1)
+#model B
+predictions_model_B <- filament1_predict(filament1, "B", filament1)
+```
+
+### Inspecting the predictions results
+
+#### Model A
+```{r}
+head(predictions_model_A)
+```
+
+#### Model B
+```{r}
+head(predictions_model_B)
+```
+
+
+### Inspecting the Predictions Visually
+
+```{r}
+library(ggplot2)
+
+#combine prediction data with filament1 data
+predictions_combined <- rbind(cbind(predictions_model_A, filament1, Model = "A"),
+                              cbind(predictions_model_B, filament1, Model = "B"))
+
+# Use ggplot to create the plot
+ggplot(predictions_combined, aes(x = CAD_Weight)) +
+  geom_line(aes(y = mean, color = Model)) + 
+  geom_ribbon(aes(ymin = lwr, ymax = upr, fill = Model), alpha = 0.25) +
+  geom_point(aes(y = Actual_Weight), data = filament1) +
+  labs(color = "Model", fill = "Model")
+```
+
+Looking at the figure, the prediction line seems to pass through the center of the data points well, indicating that both models have captured the central tendency of the data. However, it seems that model B have a narrower prediction intervals compared to model A. This suggests that model B is more certain about its predictions compared to model A. Hence, look at this preliminary analysis of the figure above, model B may be better at predicting the weight better than model A. Further analysis will be done below.
+
+## Evaluating the Squared Error (ES) and Dawid-Sebastiani (DS) Scores
+
+In this section, we create functions to evaluate the squared error (ES) and Dawid-Sebastiani (DS) scores, which have the following formulas:
+
+- Squared Error (ES) Score: 
+
+$$SE = (y - \hat{y}_F)^2$$
+
+and we can get average Squared Error by:
+
+$$\frac{1}{N} \sum_{i=1}^{N} (y_i - \hat{y}_{F_i})^2$$
+
+
+- Dawid-Sebastiani (DS) Score: 
+
+$$DS = \frac{(y-\hat{y}_F)^2}{\sigma^2} + log(\sigma_F^2)$$
+
+and we can get the average Dawid_Sebastiani Score by: 
+
+$$\frac{1}{N} \sum_{i=1}^{N} \frac{(y_i-\hat{y}_{F_i})^2}{\sigma_{i}^2} + log(\sigma_{F_i}^2)$$
+Model A Scores:
+
+```{r}
+score_A <- fil_score(data = filament1, model = "A", newdata = filament1)
+head(score_A)
+```
+
+
+Model B Scores:
+
+```{r}
+score_B <- fil_score(data = filament1, model = "B", newdata = filament1)
+head(score_B)
+```
+
+
+
+```{r, echo = FALSE}
+ggplot() + geom_point(aes(CAD_Weight,score_A$se, colour = "A"), data = filament1) + geom_point(aes(CAD_Weight, score_B$se, colour = "B"), data = filament1) + ggtitle("SE Score of Model A vs Model B") + ylab("SE Score")
+
+ggplot() + geom_point(aes(CAD_Weight,score_A$ds, colour = "A"), data = filament1) + geom_point(aes(CAD_Weight, score_B$ds, colour = "B"), data = filament1) + ggtitle("DS Score of Model A vs Model B")  + ylab("DS Score")
+```
+
+## Leave One Cross Validation
+
+```{r}
+library(tidyr)
+library(dplyr)
+#leave1out result for model A
+res_val_A <- leave1out(filament1, "A")
+#leave1out result for model B
+res_val_B <- leave1out(filament1, "B")
+```
+
+```{r, echo = FALSE}
+ggplot() + geom_point(aes(CAD_Weight,se, colour = "A"), data = res_val_A) + geom_point(aes(CAD_Weight, se, colour = "B"), data = res_val_B) + ggtitle("SE Score of Model A vs Model B using the Leave One Out Validation") + ylab("SE Score")
+
+ggplot() + geom_point(aes(CAD_Weight,ds, colour = "A"), data = res_val_A) + geom_point(aes(CAD_Weight, ds, colour = "B"), data = res_val_B) + ggtitle("DS Score of Model A vs Model B using the Leave One Out Validation") + ylab("DS Score")
+```
+
+### Leave-one-out Average Scores
+
+```{r}
+score_AB <- rbind(cbind(model = "A", se = mean(res_val_A$se), ds = mean(res_val_A$ds)),
+                  cbind(model = "B", se = mean(res_val_B$se), ds = mean(res_val_B$ds)))
+
+knitr::kable(score_AB)
+```
+
+Interpretation:
+
+- The se values are very similar for both models, indicating that in terms of average magnitude of errors, they perform similarly, with model A having SE score of 1.8417 and model B with 1.8420. The SE measures the average squared distance between the observed and predicted values, so lower values indicate better model performance. However, due to the slight difference in model A and B, it indicates no substantial difference in performance based on this metric.
+
+- The DS scores here differs more noticeably between model A and B, with model A having DS score of 1.1283 and model B with 0.9397. The DS score is a metric that combines both the precision and accuracy of the predictions, with taking account both the variance of the predictions and squared error. A lower DS score indicates that the model prediction are both more accurate and more precise. In this case, model B have a lower DS score, suggesting that model B appears to be better model in terms of this metric compared to model A.
+
+## Monte Carlo Estimate 
+
+### Exchangeability Test Discussion
+For this part, we want to do the exchangeability test between the model predictions,
+
+Where, 
+
+$H_0$: the scores of the two models are pairwise exchangeable
+
+$H_1$: Model B is better than A
+
+To do this, we can use the average $T({S_i^\Delta}) =  \frac{1}{N}\sum_{i=1}^{N}(S_i^A-S_i^B) = \frac{1}{N}\sum_{i=1}^{N}(S_i^\Delta)$ as the test statistic and use the montecarlo estimate of the p value, where $S_i^A$ is the score value of model A while $S_i^B$ is the score value of model B.
+
+More precisely, to construct a formal test, we randomise the scores within each pair. This means swapping the sign of the difference. Where we will use the test statistic mentioned above.
+
+Then, for each $j = 1,..., J$ and $i = 1,..., N$, draw $S_i^{\Delta(j)} = S_i^\Delta$ with probability 0.5, and $-S_i^\Delta$ with probability 0.5. After this, we compute the test statistic $T^{(j)} = T({S_i^{\Delta(j)}, i = 1,..., N})$. Where the average $\frac{1}{J}\sum_{i=1}^{J}I({T^{(j)}\geq T(S_i^\Delta)})$ is an unbiased estimator of the one-sided p-value w.rt T for the hypothesis above. Please, note that $I$ here is an indicator function (where the value is 1 if for $I(x)$, $x\in A,$ 0 otherwise).
+
+
+### Monte Carlo Standard Error Discussion
+Now, let us discuss on how to find the monte carlo standard error
+
+- Monte Carlo standard error for the P value Estimator:
+
+For this case, we note that we used $\frac{1}{J}\sum_{i=1}^{J}I({T^{(j)}\geq T(S_i^\Delta)})$ as the unbiased estimator of the one-sided p value estimate. Then to get the standard error of this p value, we can find the sd of $\sum_{i=1}^{J}I({T^{(j)}\geq T(S_i^\Delta)})$ and divide it by $\sqrt{J}$ where J is the number of simulations.
+
+
+
+- Monte Carlo standard error for the statistics sample:
+
+we first deduce that the montecarlo estimate $\theta$ is given by:
+
+$\hat{\theta} = \frac{1}{J}\sum_{j=1}^{J}\theta^{(j)}$
+
+The variance of the estimate:
+
+$Var(\hat{\theta}) = \frac{1}{J}\sum_{j=1}^{J}Var(\theta^{(j)}) = \frac{1}{J^2}JVar(\theta^{(j)}) = \frac{Var(\theta^{(j)})}{J}$ as the simulated values are i.i.d
+
+and finally, to get the standard error of the estimate:
+
+$SE(\hat{\theta}) = \sqrt{\frac{Var(\theta^{(j)}}{J}} = \frac{\hat{\sigma_{\theta^{(j)}}}}{\sqrt{J}}$
+
+
+
+```{r}
+score_diff <- data.frame(
+  se_diff = res_val_A$se - res_val_B$se,
+  ds_diff = res_val_A$ds - res_val_B$ds
+)
+
+#test statistic
+test_statistic <- data.frame(
+  se = mean(score_diff$se_diff),
+  ds = mean(score_diff$ds_diff)
+)
+
+set.seed(12345L)
+#num of monte carlo simulation
+J <- 10000
+
+statistic <- data.frame(se = numeric(J), ds = numeric(J))
+
+for (j in 1:J){
+  random_sign <- sample(c(-1, 1), nrow(score_diff), replace = TRUE)
+  statistic[j, "se"] <- mean(random_sign * score_diff$se_diff)
+  statistic[j, "ds"] <- mean(random_sign * score_diff$ds_diff)  
+  
+}
+
+p_values <- data.frame(
+  se = mean(statistic$se > test_statistic$se),
+  ds = mean(statistic$ds > test_statistic$ds)
+)
+
+
+#sd
+sd_se <- sd(statistic$se)
+sd_ds <- sd(statistic$ds)
+#se
+se_se <- sd_se/sqrt(J)
+se_ds <- sd_ds/sqrt(J)
+
+se_values <- data.frame(
+  se_standard_error = se_se,
+  ds_standard_error = se_ds
+)
+
+se_se2 <- sd(statistic$se > test_statistic$se)/sqrt(J)
+ds_se2 <- sd(statistic$ds > test_statistic$ds)/sqrt(J)
+se_val2 <- data.frame(
+  se_pval <- se_se2,
+  ds_pval <- ds_se2
+)
+```
+
+### Monte Carlo Standard Errors Result:
+
+Monte Carlo SE of the P Value Estimator
+```{r, echo = FALSE}
+knitr::kable(se_val2)
+```
+
+Monte Carlo SE of Sample Statistics
+```{r, echo = FALSE}
+knitr::kable(se_values)
+```
+
+The monte carlo standard error for the p value estimate in our context shows the variability of the simulation estimates. It gives an idea of how much the estimated p values would vary if we were to repeat the entire monte carlo multiple times. For our case, we get a standard error of 0.0050001 for the SE score and 0.0020993 for the DS score, suggesting that the monte carlo estimates are quite precise since the monte carlo standard errors are pretty small. This means that, when conducting hypothesis testing, we can be more confident in the result of our p values. 
+
+On the other hand, the monte carlo se of the statistics sample, show us the variability of the simulated test statistics around their mean. This suggest, it can provide an insight of the spread of the test statistics if the null hypothesis were true. For our case, we get a standard error of 0.0004705 for se and 0.0011121 for ds. The standard error are pretty small for both scores, suggesting that both test statistic have a tight distribution around their mean, with a slight more variability in the ds score compared to the se score. Therefore, in the context of hypothesis testing, these small standard error shows that we can be more confident in the result of our testing.
+
+Hence, let us now conduct hypothesis testing to investigate whether one model is better at predicting than the other.
+
+### Hypothesis Testing: P Val Result
+```{r, echo = FALSE}
+knitr::kable(p_values)
+```
+Looking at the P value of both Squared Error and Dawid-Sebastiani scores, the se error term has a p value larger than the significant value (in most case, 0.05), while the ds has a lower p value than the significant value, with the se p values having a score of 0.4989 while the ds have p values of 0.0436. Hence, in terms of se score, the p value is insignificant, suggesting that the model are exchangeable in terms of se score or that we don't have enough evidence to conclude that model B is better than model A in terms of the se score. On the other hand, the p value of ds score (0.0436) is lower than the significant value (in most case, 0.05), meaning that the p value is significant, suggesting that in this case, the model B is better than model A in terms of ds score.
+
+In conclusion, based on the SE score, you cannot conclude that one model is superior to the other. However, the DS score provides evidence that Model B might be the better model. It's important to consider that the DS score takes into account both the variance of the predictions and the scale of the predictions, making it a more comprehensive measure than the SE score.
+
+# Part 2: Archaeology in the Baltic sea
+
+## Evaluating the combined log-likelihood
+
+```{r}
+#test the arch_loglike function
+test_df <- data.frame(N = rgeom(1000, 1/1001), phi = rbeta(1000, 2, 2))
+y = c(256,237)
+head(arch_loglike(test_df, y))
+```
+
+
+## Estimation using Monte Carlo Methods
+
+```{r}
+#estimate
+monte_carlo_res <- estimate(y=c(237,256), xi=1/1001, a=0.5, b=0.5, K=10000)
+```
+
+Estimate Result: 
+```{r, echo = FALSE}
+knitr::kable(monte_carlo_res)
+```
+
+### Result Interpretation
+From the table above we get:
+
+- $p_Y{(y)}$ = 8.2e-06, and in this case, $p_Y{(y)}$ represent the estimated probability of observing the data y given the prior distributions for N and $\phi$. This small value (8.2e-06) indicates that under the model and priors given, the probability of observing exactly 256 left and 237 femurs is really low. 
+
+- $E[N|y]$  = 868.2038, and in this case $E[N|y]$ represent the expected value of the total number people buried given the observed data y. The value indicates that the average number of people you would expect to be buried given the femur count and the priors are 868.2038. This value is lower than the 1000 individuals initially estimated by the archaeologist. It might mean that some of inividuals femurs were not found or that the initial estimate was too high.
+
+- $E[\phi|y]$ = 0.4071623, and in this case $E[\phi|y]$ represent the probability of finding a femur. The value of the model estimate for the likelihood of finding a femur during the excavations are 0.4071623.
+
+Furthermore, we note that $E[N|y] \times E[\phi|y] = 868.2038 \times 0.4071623 \approx 353.5$ which is quite lower compared to our observations of (y1,y2) totaling to 493 and it is also lower compared to our expected value of observation of 500 (mean of binomial(n,p) = np).
+
+# Code appendix
+
+```{r code=readLines("code.R"), eval=FALSE, echo=TRUE}
+# Do not change this code chunk
+```
